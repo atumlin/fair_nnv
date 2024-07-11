@@ -1,4 +1,4 @@
-%% Fairness Verification of Adult Classification Model (NN)
+%% Exact Fairness Verification of Adult Classification Model (NN)
 % Comparison for the models used in Fairify
 
 % Suppress warnings
@@ -13,15 +13,25 @@ clear; clc;
 modelDir = './adult_onnx';  % Directory containing ONNX models
 onnxFiles = dir(fullfile(modelDir, '*.onnx'));  % List all .onnx files
 
-load("adult_data.mat", 'X', 'y'); % load Adult data
+load("./data/adult_data.mat", 'X', 'y');  % Load data once
+
+% Initialize results storage
+results = {};
+
+% List of models to process
+modelList = {'AC-1', 'AC-4', 'AC-5', 'AC-10', 'AC-3'};
 
 %% Loop through each model
 for k = 1:length(onnxFiles)
-
+    [~, modelName, ~] = fileparts(onnxFiles(k).name);
+    if any(strcmp(modelName, modelList))
     onnx_model_path = fullfile(onnxFiles(k).folder, onnxFiles(k).name);
 
     % Load the ONNX file as DAGNetwork
     netONNX = importONNXNetwork(onnx_model_path, 'OutputLayerType', 'classification', 'InputDataFormats', {'BC'});
+
+    % analyzeNetwork(netONNX)
+    % return 
 
     % Convert the DAGNetwork to NNV format
     net = matlab2nnv(netONNX);
@@ -47,33 +57,33 @@ for k = 1:length(onnxFiles)
     % Count total observations
     total_obs = size(X_test_loaded, 2);
     % disp(['There are total ', num2str(total_obs), ' observations']);
-   
+
     % Number of observations we want to test
-    numObs = 1000;
+    numObs = 100;
     
     %% Verification
     
     % To save results (robustness and time)
-    results = zeros(numObs,2);
+    % results = zeros(numObs,2);
     
     % First, we define the reachability options
     reachOptions = struct; % initialize
-    reachOptions.reachMethod = 'relax-star-area'; % using relax method
-    reachOptions.relaxFactor = 0.5;
+    reachOptions.reachMethod = 'exact-star';
     
     nR = 50; % ---> just chosen arbitrarily
     
-    % ADJUST epsilon values here
-    epsilon = [0.0,0.001,0.01];
-
-   
+    % ADJUST epsilons value here
+    epsilon = [-1,0.0,0.02,0.03,0.05,0.07,0.1]; 
+    % -1 -> no perturbation to model
+    % 0.0 -> counterfactual fairness (flips sensitive attribute)
+    % >0.0 -> individual fairness (flips SA w/ perturbation of numerical features)  
+    
     % Set up results
-    nE = 3; 
+    nE = 3;
     res = zeros(numObs,nE); % robust result
     time = zeros(numObs,nE); % computation time
-    met = repmat("relax", [numObs, nE]); % method used to compute result
+    met = repmat("exact", [numObs, nE]); % method used to compute result
  
-    
     % Randomly select observations
     rng(500); % Set a seed for reproducibility
     rand_indices = randsample(total_obs, numObs);
@@ -88,46 +98,41 @@ for k = 1:length(onnxFiles)
         verificationTimer.TimerFcn = @(myTimerObj, thisEvent) ...
         assignin('base', 'timeoutOccurred', true);
         start(verificationTimer);  % Start the timer
-        
-        % Iterate through observations
+
+    
         for i=1:numObs
             idx = rand_indices(i);
-            [IS, xRand] = perturbationIF(X_test_loaded(:, idx), epsilon(e), nR, min_values, max_values);
+            IS = perturbationIF(X_test_loaded(:, idx), epsilon(e), min_values, max_values);
            
-            skipTryCatch = false;  % Initialize the flag
+           
             t = tic;  % Start timing the verification for each sample
-            %
-            % Try falsification, then relax star, if unknown, try exact-star
-            %
-            % Falsification
-            for xR=1:length(nR+3)
-                im = xRand(:, xR);
-                predictedLabels = net.evaluate(im);
-                [~, Pred] = min(predictedLabels);
-                if Pred ~= y_test_loaded(idx)
-                    res(i,e) = 0; % counterexample found
-                    time(i,e) = toc(t);
-                    met(i,e) = "counterexample";
-                    skipTryCatch = true;  % Set the flag to skip try-catch block
-                    continue;
+            outputSet = net.reach(IS,reachOptions); % Generate output set
+            target = y_test_loaded(idx);
+            
+            % Process set
+            if ~isa(outputSet, "Star")
+                nr = length(outputSet);
+                R = Star;
+                for s=1:nr
+                    R = outputSet(s).toStar;
                 end
+            else
+                R = outputSet;
             end
-            if ~skipTryCatch
-                try
-                    % Relax star
-                    temp = net.verify_robustness(IS, reachOptions, y_test_loaded(idx));
-                    % Exact star
-                    if temp ~= 1 && temp ~= 0
-                        reachOptions.reachMethod = 'exact-star';
-                        temp = net.verify_robustness(IS, reachOptions, y_test_loaded(idx));
-                        met(i,e) = 'exact';
-                    end
-                    res(i,e) = temp; % robust result
-                catch ME
-                    met(i,e) = ME.message;
-                    temp = -1;
-                end
+
+            % Process fairness specification
+            target = net.robustness_set(target, 'min');
+
+            % Verify fairness
+            temp = verify_specification(R, target);
+            
+            if reachOptions.reachMethod == "exact-star" && temp == 2
+                temp = 0;
             end
+
+            met(i,e) = 'exact';
+           
+            res(i,e) = temp; % robust result
     
             time(i,e) = toc(t); % store computation time
     
@@ -137,12 +142,8 @@ for k = 1:length(onnxFiles)
                 res(i+1:end,e) = 2; % Mark remaining as unknown
                 break; % Exit the inner loop after timeout
             end
-    
-            % Reset reachOptions
-            reachOptions.reachMethod = 'relax-star-area';
-            reachOptions.relaxFactor = 0.5;
         end
-
+    
         % Summary results, stopping, and deleting the timer should be outside the inner loop
         stop(verificationTimer);
         delete(verificationTimer);
@@ -164,13 +165,25 @@ for k = 1:length(onnxFiles)
         disp("Number of unknown samples = "+string(unk)+ ", equivalent to " + string(100*unk/N) + "% of the samples.");
         disp(" ");
         disp("It took a total of "+string(totalTime) + " seconds to compute the verification results, an average of "+string(avgTime)+" seconds per sample");
+        % Collect results for CSV
+        results{end+1} = {onnxFiles(k).name, epsilon(e), 100 * rob / N, 100 * not_rob / N, 100 * unk / N, totalTime, avgTime};
+    end
     end
 end
 
+%% Save results to CSV
+csv_filename = './results/adult_verify_results.csv';
+fid = fopen(csv_filename, 'w');
+fprintf(fid, 'Model,Epsilon,FairPercent,NonFairPercent,UnknownPercent,TotalTime,AvgTime\n');
+for r = 1:length(results)
+    fprintf(fid, '%s,%f,%f,%f,%f,%f,%f\n', results{r}{1}, results{r}{2}, results{r}{3}, results{r}{4}, results{r}{5}, results{r}{6}, results{r}{7});
+end
+fclose(fid);
+disp(['Results saved to ', csv_filename]);
 
 %% Helper Function
 % Apply perturbation (individual fairness) to sample
-function [IS, xRand] = perturbationIF(x, epsilon, nR, min_values, max_values)
+function IS = perturbationIF(x, epsilon, min_values, max_values)
     % Applies perturbations on selected features of input sample x
     % Return an ImageStar (IS) and random images from initial set
     SampleSize = size(x);
@@ -180,18 +193,22 @@ function [IS, xRand] = perturbationIF(x, epsilon, nR, min_values, max_values)
     nonsensitive_rows = [1,10,11,12];
     
     % Flip the sensitive attribute
-    if x(sensitive_rows) == 1
-        x(sensitive_rows) = 0;
-    else
-        x(sensitive_rows) = 1;
+    if epsilon ~= -1
+        if x(sensitive_rows) == 1
+            x(sensitive_rows) = 0;
+        else
+            x(sensitive_rows) = 1;
+        end
     end
 
     % Apply epsilon perturbation to non-sensitive numerical features
     for i = 1:length(nonsensitive_rows)
-        if nonsensitive_rows(i) <= size(x, 1)
-            disturbance(nonsensitive_rows(i), :) = epsilon;
-        else
-            error('The input data does not have enough rows.');
+        if epsilon ~= -1 
+            if nonsensitive_rows(i) <= size(x, 1)
+                disturbance(nonsensitive_rows(i), :) = epsilon;
+            else
+                error('The input data does not have enough rows.');
+            end
         end
     end
 
@@ -199,16 +216,5 @@ function [IS, xRand] = perturbationIF(x, epsilon, nR, min_values, max_values)
     lb = max(x - disturbance, min_values);
     ub = min(x + disturbance, max_values);
     IS = ImageStar(single(lb), single(ub)); % default: single (assume onnx input models)
-
-    % Create random samples from initial set
-    % Adjusted reshaping according to specific needs
-    lb = reshape(lb, [13,1]); 
-    ub = reshape(ub, [13,1]);
-    xB = Box(single(lb), single(ub));
-    xRand = xB.sample(nR);
-    xRand = reshape(xRand,[13,nR]);
-    xRand(:,nR+1) = x; % add original image
-    xRand(:,nR+2) = IS.im_lb; % add lower bound image
-    xRand(:,nR+3) = IS.im_ub; % add upper bound image
 end
 
