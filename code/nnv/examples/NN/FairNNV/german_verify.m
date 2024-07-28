@@ -10,7 +10,7 @@ warning('on', 'verbose')
 
 %% Setup
 clear; clc;
-modelDir = './german_onnx';  % Directory containing ONNX models
+modelDir = './german_onnx_2';  % Directory containing ONNX models
 onnxFiles = dir(fullfile(modelDir, '*.onnx'));  % List all .onnx files
 
 load("./data/german_data.mat", 'X', 'y');  % Load data once
@@ -95,8 +95,8 @@ for k = 1:length(onnxFiles)
     nR = 50; % ---> just chosen arbitrarily
     
     % ADJUST epsilons value here
-    epsilon = [-1,0.0,0.001,0.01,0.05];
-    % epsilon = [-1,0.0,0.02,0.03,0.05,0.07,0.1]; 
+    % epsilon = [0.001];
+    epsilon = [-1,0.0,0.02,0.03,0.05,0.07,0.1]; 
     % -1 -> no perturbation to model
     % 0.0 -> counterfactual fairness (flips sensitive attribute)
     % >0.0 -> individual fairness (flips SA w/ perturbation of numerical features)  
@@ -195,7 +195,12 @@ for k = 1:length(onnxFiles)
 end
 
 %% Save results to CSV
-csv_filename = './results/german_verify_results.csv';
+% Get the current timestamp using datetime
+timestamp = datetime('now', 'Format', 'yyyyMMdd_HHmmss');
+% Convert the datetime to a string
+timestampStr = char(timestamp);
+% Create the filename with the timestamp
+csv_filename = ['./results/german_verify_results_', timestampStr, '.csv'];
 fid = fopen(csv_filename, 'w');
 fprintf(fid, 'Model,Epsilon,FairPercent,NonFairPercent,UnknownPercent,TotalTime,AvgTime\n');
 for r = 1:length(results)

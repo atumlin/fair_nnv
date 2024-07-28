@@ -10,7 +10,7 @@ warning('on', 'verbose')
 
 %% Setup
 clear; clc;
-modelDir = './adult_debiased_onnx';  % Directory containing ONNX models
+modelDir = './adult_debiased_onnx_2';  % Directory containing ONNX models
 onnxFiles = dir(fullfile(modelDir, '*.onnx'));  % List all .onnx files
 
 load("./data/adult_data.mat", 'X', 'y');  % Load data once
@@ -170,7 +170,12 @@ for k = 1:length(onnxFiles)
 end
 
 %% Save results to CSV
-csv_filename = './results/adult_verify_debiased_results.csv';
+% Get the current timestamp using datetime
+timestamp = datetime('now', 'Format', 'yyyyMMdd_HHmmss');
+% Convert the datetime to a string
+timestampStr = char(timestamp);
+% Create the filename with the timestamp
+csv_filename = ['./adult_verify_debiased_results_', timestampStr, '.csv'];
 fid = fopen(csv_filename, 'w');
 fprintf(fid, 'Model,Epsilon,FairPercent,NonFairPercent,UnknownPercent,TotalTime,AvgTime\n');
 for r = 1:length(results)

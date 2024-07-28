@@ -1,4 +1,4 @@
-%% Exact Fairness Verification of German Credit Classification Model (NN)
+%% Exact Fairness Verification of Bank Marketing Classification Model (NN)
 % Comparison for the models used in Fairify
 
 % Suppress warnings
@@ -10,10 +10,10 @@ warning('on', 'verbose')
 
 %% Setup
 clear; clc;
-modelDir = './german_debiased_onnx_2';  % Directory containing ONNX models
+modelDir = './bank_onnx';  % Directory containing ONNX models
 onnxFiles = dir(fullfile(modelDir, '*.onnx'));  % List all .onnx files
 
-load("./data/german_data.mat", 'X', 'y');  % Load data once
+load("./data/bank_data.mat", 'X', 'y');  % Load data once
 
 % Initialize results storage
 results = {};
@@ -64,7 +64,7 @@ for k = 1:length(onnxFiles)
     %     predictedLabels = net.evaluate(im);
     %     disp(predictedLabels);
     % end
-    % 
+
     % % 
     % % Test accuracy --> verify matches with python
     % % 
@@ -79,7 +79,6 @@ for k = 1:length(onnxFiles)
     %     end
     % end
     % disp(['Test Accuracy: ', num2str(total_corr/total_obs)]);
-    % return
 
     % Number of observations we want to test
     numObs = 100;
@@ -96,7 +95,7 @@ for k = 1:length(onnxFiles)
     nR = 50; % ---> just chosen arbitrarily
     
     % ADJUST epsilons value here
-    % epsilon = [-1,0.0,0.001,0.01,0.05];
+    % epsilon = [0.001];
     epsilon = [-1,0.0,0.02,0.03,0.05,0.07,0.1]; 
     % -1 -> no perturbation to model
     % 0.0 -> counterfactual fairness (flips sensitive attribute)
@@ -201,7 +200,7 @@ timestamp = datetime('now', 'Format', 'yyyyMMdd_HHmmss');
 % Convert the datetime to a string
 timestampStr = char(timestamp);
 % Create the filename with the timestamp
-csv_filename = ['./results/german_verify_debiased_results_', timestampStr, '.csv'];
+csv_filename = ['./results/bank_verify_results_', timestampStr, '.csv'];
 fid = fopen(csv_filename, 'w');
 fprintf(fid, 'Model,Epsilon,FairPercent,NonFairPercent,UnknownPercent,TotalTime,AvgTime\n');
 for r = 1:length(results)
@@ -219,8 +218,8 @@ function IS = perturbationIF(x, epsilon, min_values, max_values)
     SampleSize = size(x);
 
     disturbance = zeros(SampleSize, "like", x);
-    sensitive_rows = [20]; 
-    nonsensitive_rows = [2,5,8,10,12,15,16];
+    sensitive_rows = [1]; 
+    nonsensitive_rows = [6,12,13,14,15];
     
     % Flip the sensitive attribute
     if epsilon ~= -1
