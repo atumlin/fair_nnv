@@ -19,7 +19,8 @@ load("./data/adult_data.mat", 'X', 'y');  % Load data once
 results = {};
 
 % List of models to process
-modelList = {'AC-1', 'AC-4', 'AC-5', 'AC-10', 'AC-3'};
+% modelList = {'AC-1', 'AC-4', 'AC-5', 'AC-10', 'AC-3'};
+modelList = {'AC-4'};
 
 %% Loop through each model
 for k = 1:length(onnxFiles)
@@ -59,7 +60,7 @@ for k = 1:length(onnxFiles)
     % disp(['There are total ', num2str(total_obs), ' observations']);
 
     % Number of observations we want to test
-    numObs = 100;
+    numObs = 50;
     
     %% Verification
     
@@ -68,12 +69,14 @@ for k = 1:length(onnxFiles)
     
     % First, we define the reachability options
     reachOptions = struct; % initialize
-    reachOptions.reachMethod = 'exact-star';
+    reachOptions.reachMethod = 'approx-star';
     
     nR = 50; % ---> just chosen arbitrarily
     
     % ADJUST epsilons value here
-    epsilon = [-1,0.0,0.02,0.03,0.05,0.07,0.1]; 
+    % epsilon = [-1,0.0,0.01,0.05,0.1]; 
+    % epsilon = [-1,0.0,0.01,0.02,0.03,0.05,0,07,0.1]; 
+    epsilon = [0.03,0.05]; 
     % -1 -> no perturbation to model
     % 0.0 -> counterfactual fairness (flips sensitive attribute)
     % >0.0 -> individual fairness (flips SA w/ perturbation of numerical features)  
@@ -82,7 +85,7 @@ for k = 1:length(onnxFiles)
     nE = 3;
     res = zeros(numObs,nE); % robust result
     time = zeros(numObs,nE); % computation time
-    met = repmat("exact", [numObs, nE]); % method used to compute result
+    met = repmat("approx", [numObs, nE]); % method used to compute result
  
     % Randomly select observations
     rng(500); % Set a seed for reproducibility
@@ -100,14 +103,16 @@ for k = 1:length(onnxFiles)
         start(verificationTimer);  % Start the timer
 
     
-        for i=1:numObs
-            idx = rand_indices(i);
+        for i=1:1
+            idx = rand_indices(40);
             IS = perturbationIF(X_test_loaded(:, idx), epsilon(e), min_values, max_values);
+
+            disp(IS)
 
             t = tic;  % Start timing the verification for each sample
             outputSet = net.reach(IS,reachOptions); % Generate output set
             target = y_test_loaded(idx);
-            
+
             % Process set
             if ~isa(outputSet, "Star")
                 nr = length(outputSet);
@@ -121,6 +126,8 @@ for k = 1:length(onnxFiles)
 
             % Process fairness specification
             target = net.robustness_set(target, 'min');
+
+            [l,u] = R.getRanges
 
             % Verify fairness
             temp = verify_specification(R, target);
@@ -170,20 +177,20 @@ for k = 1:length(onnxFiles)
     end
 end
 
-%% Save results to CSV
-% Get the current timestamp using datetime
-timestamp = datetime('now', 'Format', 'yyyyMMdd_HHmmss');
-% Convert the datetime to a string
-timestampStr = char(timestamp);
-% Create the filename with the timestamp
-csv_filename = ['./results/adult_verify_results_', timestampStr, '.csv'];
-fid = fopen(csv_filename, 'w');
-fprintf(fid, 'Model,Epsilon,FairPercent,NonFairPercent,UnknownPercent,TotalTime,AvgTime\n');
-for r = 1:length(results)
-    fprintf(fid, '%s,%f,%f,%f,%f,%f,%f\n', results{r}{1}, results{r}{2}, results{r}{3}, results{r}{4}, results{r}{5}, results{r}{6}, results{r}{7});
-end
-fclose(fid);
-disp(['Results saved to ', csv_filename]);
+% %% Save results to CSV
+% % Get the current timestamp using datetime
+% timestamp = datetime('now', 'Format', 'yyyyMMdd_HHmmss');
+% % Convert the datetime to a string
+% timestampStr = char(timestamp);
+% % Create the filename with the timestamp
+% csv_filename = ['./results/adult_verify_results_', timestampStr, '.csv'];
+% fid = fopen(csv_filename, 'w');
+% fprintf(fid, 'Model,Epsilon,FairPercent,NonFairPercent,UnknownPercent,TotalTime,AvgTime\n');
+% for r = 1:length(results)
+%     fprintf(fid, '%s,%f,%f,%f,%f,%f,%f\n', results{r}{1}, results{r}{2}, results{r}{3}, results{r}{4}, results{r}{5}, results{r}{6}, results{r}{7});
+% end
+% fclose(fid);
+% disp(['Results saved to ', csv_filename]);
 
 %% Helper Function
 % Apply perturbation (individual fairness) to sample
@@ -219,6 +226,7 @@ function IS = perturbationIF(x, epsilon, min_values, max_values)
     % Calculate disturbed lower and upper bounds considering min and max values
     lb = max(x - disturbance, min_values);
     ub = min(x + disturbance, max_values);
+
     IS = ImageStar(single(lb), single(ub)); % default: single (assume onnx input models)
 end
 
