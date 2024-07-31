@@ -20,7 +20,7 @@ results = {};
 
 % List of models to process
 % modelList = {'AC-1', 'AC-4', 'AC-5', 'AC-10', 'AC-3'};
-modelList = {'AC-4'};
+modelList = {'AC-1'};
 
 %% Loop through each model
 for k = 1:length(onnxFiles)
@@ -60,7 +60,25 @@ for k = 1:length(onnxFiles)
     % disp(['There are total ', num2str(total_obs), ' observations']);
 
     % Number of observations we want to test
-    numObs = 50;
+    numObs = 100;
+
+    % %%
+    % % Test accuracy --> verify matches with python
+    % %
+    % total_corr= 0;
+    % for i=1:total_obs
+    %     im = X_test_loaded(:, i);
+    %     predictedLabels = net.evaluate(im);
+    %     [~, Pred] = min(predictedLabels);
+    %     % disp(Pred)
+    %     TrueLabel = y_test_loaded(i);
+    %     % disp(TrueLabel)
+    %     if Pred == TrueLabel
+    %         total_corr = total_corr + 1;
+    %     end
+    % end
+    % disp("Accuracy of Model: "+string(total_corr/total_obs));
+    % return
     
     %% Verification
     
@@ -69,14 +87,14 @@ for k = 1:length(onnxFiles)
     
     % First, we define the reachability options
     reachOptions = struct; % initialize
-    reachOptions.reachMethod = 'approx-star';
+    reachOptions.reachMethod = 'exact-star';
     
     nR = 50; % ---> just chosen arbitrarily
     
     % ADJUST epsilons value here
     % epsilon = [-1,0.0,0.01,0.05,0.1]; 
-    % epsilon = [-1,0.0,0.01,0.02,0.03,0.05,0,07,0.1]; 
-    epsilon = [0.03,0.05]; 
+    % epsilon = [-1,0.0,0.01,0.02,0.03,0.05,0.07,0.1]; 
+    epsilon = [0.05]; 
     % -1 -> no perturbation to model
     % 0.0 -> counterfactual fairness (flips sensitive attribute)
     % >0.0 -> individual fairness (flips SA w/ perturbation of numerical features)  
@@ -85,7 +103,7 @@ for k = 1:length(onnxFiles)
     nE = 3;
     res = zeros(numObs,nE); % robust result
     time = zeros(numObs,nE); % computation time
-    met = repmat("approx", [numObs, nE]); % method used to compute result
+    met = repmat("exact", [numObs, nE]); % method used to compute result
  
     % Randomly select observations
     rng(500); % Set a seed for reproducibility
@@ -101,13 +119,30 @@ for k = 1:length(onnxFiles)
         verificationTimer.TimerFcn = @(myTimerObj, thisEvent) ...
         assignin('base', 'timeoutOccurred', true);
         start(verificationTimer);  % Start the timer
-
-    
+        
         for i=1:1
-            idx = rand_indices(40);
-            IS = perturbationIF(X_test_loaded(:, idx), epsilon(e), min_values, max_values);
+            idx = rand_indices(2);
+            im = X_test_loaded(:, idx);
 
-            disp(IS)
+
+            predictedLabels = net.evaluate(im);
+            [~, Pred] = min(predictedLabels);
+            disp("Prior Prediction: "+string(Pred))
+
+            % Flip the sensitive attribute
+            if im(9) == 1
+                im(9) = 0;
+            else
+                im(9) = 1;
+            end
+
+            predictedLabels = net.evaluate(im);
+            [~, Pred] = min(predictedLabels);
+            disp("Prediction After Flipping: "+string(Pred))
+            TrueLabel = y_test_loaded(i);
+            disp("True Label: "+string(TrueLabel))
+            
+            IS = perturbationIF(X_test_loaded(:, idx), epsilon(e), min_values, max_values);
 
             t = tic;  % Start timing the verification for each sample
             outputSet = net.reach(IS,reachOptions); % Generate output set
@@ -127,7 +162,7 @@ for k = 1:length(onnxFiles)
             % Process fairness specification
             target = net.robustness_set(target, 'min');
 
-            [l,u] = R.getRanges
+            [l,u] = R.getRanges;
 
             % Verify fairness
             temp = verify_specification(R, target);
@@ -135,6 +170,9 @@ for k = 1:length(onnxFiles)
             if reachOptions.reachMethod == "exact-star" && temp == 2
                 temp = 0;
             end
+
+            disp("Fairness(Robustness): "+string(temp))
+            return
 
             met(i,e) = 'exact';
            
@@ -222,11 +260,19 @@ function IS = perturbationIF(x, epsilon, min_values, max_values)
             end
         end
     end
+    % disp("Minimum Values: "+string(min_values))
+    % disp("Maximum Values: "+string(max_values))
+    % disp("Sample: "+string(x))
+    % disp("Disturbance: "+string(disturbance))
+    
 
     % Calculate disturbed lower and upper bounds considering min and max values
     lb = max(x - disturbance, min_values);
     ub = min(x + disturbance, max_values);
+    % disp("Lower Bound: "+string(lb))
+    % disp("Upper Bound: "+string(ub))
 
     IS = ImageStar(single(lb), single(ub)); % default: single (assume onnx input models)
+    % IS = ImageStar(lb,ub);
 end
 
