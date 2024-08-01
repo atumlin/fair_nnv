@@ -1,0 +1,2 @@
+Model,Epsilon,FairPercent,NonFairPercent,UnknownPercent,TotalTime,AvgTime
+AC-1.onnx,0.000000,1.000000,99.000000,0.000000,0.041435,0.000414

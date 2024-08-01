@@ -18,8 +18,8 @@ load("./data/adult_data.mat", 'X', 'y');  % Load data once
 % Initialize results storage
 results = {};
 % List of models to process
-% modelList = {'AC-1', 'AC-4', 'AC-5', 'AC-10', 'AC-3'};
-modelList = {'AC-1'};
+modelList = {'AC-1', 'AC-4', 'AC-5', 'AC-10', 'AC-3', 'AC-11', 'AC-12'};
+% modelList = {'AC-1'};
 
 %% Loop through each model
 for k = 1:length(onnxFiles)
@@ -60,23 +60,23 @@ for k = 1:length(onnxFiles)
     % Number of observations we want to test
     numObs = 100;
 
-    % %%
-    % % Test accuracy --> verify matches with python
-    % %
-    % total_corr= 0;
-    % for i=1:total_obs
-    %     im = X_test_loaded(:, i);
-    %     predictedLabels = net.evaluate(im);
-    %     [~, Pred] = min(predictedLabels);
-    %     % disp(Pred)
-    %     TrueLabel = y_test_loaded(i);
-    %     % disp(TrueLabel)
-    %     if Pred == TrueLabel
-    %         total_corr = total_corr + 1;
-    %     end
-    % end
-    % disp("Accuracy of Model: "+string(total_corr/total_obs));
-    % return
+    %%
+    % Test accuracy --> verify matches with python
+    %
+    total_corr= 0;
+    for i=1:total_obs
+        im = X_test_loaded(:, i);
+        predictedLabels = net.evaluate(im);
+        [~, Pred] = min(predictedLabels);
+        % disp(Pred)
+        TrueLabel = y_test_loaded(i);
+        % disp(TrueLabel)
+        if Pred == TrueLabel
+            total_corr = total_corr + 1;
+        end
+    end
+    disp("Accuracy of Model: "+string(total_corr/total_obs));
+
     
     %% Verification
     
@@ -90,8 +90,8 @@ for k = 1:length(onnxFiles)
     nR = 50; % ---> just chosen arbitrarily
     
     % ADJUST epsilons value here
-    % epsilon = [-1,0.0,0.02,0.03,0.05,0.07,0.1]; 
-    epsilon = [0.0]; 
+    epsilon = [0.0,0.02,0.03,0.05,0.07,0.1]; 
+    % epsilon = [0.0]; 
     % -1 -> no perturbation to model
     % 0.0 -> counterfactual fairness (flips sensitive attribute)
     % >0.0 -> individual fairness (flips SA w/ perturbation of numerical features)  
@@ -118,29 +118,29 @@ for k = 1:length(onnxFiles)
         start(verificationTimer);  % Start the timer
 
     
-        for i=1:1
-            idx = rand_indices(2);
+        for i=1:numObs
+            idx = rand_indices(i);
             im = X_test_loaded(:, idx);
 
-            predictedLabels = net.evaluate(im);
-            [~, Pred] = min(predictedLabels);
-            disp("Prior Prediction: "+string(Pred))
+            % predictedLabels = net.evaluate(im);
+            % [~, Pred] = min(predictedLabels);
+            % disp("Prior Prediction: "+string(Pred))
+            % 
+            % % Flip the sensitive attribute
+            % if im(9) == 1
+            %     im(9) = 0;
+            % else
+            %     im(9) = 1;
+            % end
+            % 
+            % predictedLabels = net.evaluate(im);
+            % [~, Pred] = min(predictedLabels);
+            % disp("Prediction After Flipping: "+string(Pred))
+            % TrueLabel = y_test_loaded(i);
+            % disp("True Label: "+string(TrueLabel))
 
-            % Flip the sensitive attribute
-            if im(9) == 1
-                im(9) = 0;
-            else
-                im(9) = 1;
-            end
-
-            predictedLabels = net.evaluate(im);
-            [~, Pred] = min(predictedLabels);
-            disp("Prediction After Flipping: "+string(Pred))
-            TrueLabel = y_test_loaded(i);
-            disp("True Label: "+string(TrueLabel))
-            
             IS = perturbationIF(X_test_loaded(:, idx), epsilon(e), min_values, max_values);
-                 
+
             t = tic;  % Start timing the verification for each sample
             outputSet = net.reach(IS,reachOptions); % Generate output set
             target = y_test_loaded(idx);
@@ -156,12 +156,10 @@ for k = 1:length(onnxFiles)
                 R = outputSet;
             end
 
-            % disp(R)
-
             [l,u] = R.getRanges;
 
             % Process fairness specification
-            target = net.robustness_set(target, 'max');
+            target = net.robustness_set(target, 'min');
 
             % Verify fairness
             temp = verify_specification(R, target);
@@ -169,9 +167,6 @@ for k = 1:length(onnxFiles)
             if reachOptions.reachMethod == "exact-star" && temp == 2
                 temp = 0;
             end
-
-            disp("Fairness(Robustness): "+string(temp))
-            return
 
             met(i,e) = 'exact';
            
@@ -214,20 +209,20 @@ for k = 1:length(onnxFiles)
     end
 end
 
-% %% Save results to CSV
-% % Get the current timestamp using datetime
-% timestamp = datetime('now', 'Format', 'yyyyMMdd_HHmmss');
-% % Convert the datetime to a string
-% timestampStr = char(timestamp);
-% % Create the filename with the timestamp
-% csv_filename = ['./adult_verify_debiased_results_', timestampStr, '.csv'];
-% fid = fopen(csv_filename, 'w');
-% fprintf(fid, 'Model,Epsilon,FairPercent,NonFairPercent,UnknownPercent,TotalTime,AvgTime\n');
-% for r = 1:length(results)
-%     fprintf(fid, '%s,%f,%f,%f,%f,%f,%f\n', results{r}{1}, results{r}{2}, results{r}{3}, results{r}{4}, results{r}{5}, results{r}{6}, results{r}{7});
-% end
-% fclose(fid);
-% disp(['Results saved to ', csv_filename]);
+%% Save results to CSV
+% Get the current timestamp using datetime
+timestamp = datetime('now', 'Format', 'yyyyMMdd_HHmmss');
+% Convert the datetime to a string
+timestampStr = char(timestamp);
+% Create the filename with the timestamp
+csv_filename = ['./adult_verify_debiased_results_', timestampStr, '.csv'];
+fid = fopen(csv_filename, 'w');
+fprintf(fid, 'Model,Epsilon,FairPercent,NonFairPercent,UnknownPercent,TotalTime,AvgTime\n');
+for r = 1:length(results)
+    fprintf(fid, '%s,%f,%f,%f,%f,%f,%f\n', results{r}{1}, results{r}{2}, results{r}{3}, results{r}{4}, results{r}{5}, results{r}{6}, results{r}{7});
+end
+fclose(fid);
+disp(['Results saved to ', csv_filename]);
 
 %% Helper Function
 % Apply perturbation (individual fairness) to sample
