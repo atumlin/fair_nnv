@@ -1,5 +1,4 @@
 %% Exact Fairness Verification of Debiased Adult Classification Model (NN)
-% Comparison for the models used in Fairify
 
 % Suppress warnings
 warning('off', 'nnet_cnn_onnx:onnx:WarnAPIDeprecation');
@@ -10,7 +9,7 @@ warning('on', 'verbose')
 
 %% Setup
 clear; clc;
-modelDir = './adult_debiased_onnx_2';  % Directory containing ONNX models
+modelDir = './adult_debiased_onnx';  % Directory containing ONNX models
 onnxFiles = dir(fullfile(modelDir, '*.onnx'));  % List all .onnx files
 
 load("./data/adult_data.mat", 'X', 'y');  % Load data once
@@ -18,24 +17,23 @@ load("./data/adult_data.mat", 'X', 'y');  % Load data once
 % Initialize results storage
 results = {};
 % List of models to process
-modelList = {'AC-1', 'AC-4', 'AC-5', 'AC-10', 'AC-3', 'AC-11', 'AC-12'};
-% modelList = {'AC-1'};
+modelList = {'AC-1', 'AC-4', 'AC-3'};
 
 %% Loop through each model
 for k = 1:length(onnxFiles)
     [~, modelName, ~] = fileparts(onnxFiles(k).name);
     if any(strcmp(modelName, modelList))
+    
+    clear net netONNX outputSet IS R
+        
     onnx_model_path = fullfile(onnxFiles(k).folder, onnxFiles(k).name);
 
     % Load the ONNX file as DAGNetwork
     netONNX = importONNXNetwork(onnx_model_path, 'OutputLayerType', 'classification', 'InputDataFormats', {'BC'});
 
-    % analyzeNetwork(netONNX)
-
     % Convert the DAGNetwork to NNV format
     net = matlab2nnv(netONNX);
      
-    % Jimmy Rigged Fix: manually edit ouput size
     net.OutputSize = 2;
     
     X_test_loaded = permute(X, [2, 1]);
@@ -60,9 +58,7 @@ for k = 1:length(onnxFiles)
     % Number of observations we want to test
     numObs = 100;
 
-    %%
-    % Test accuracy --> verify matches with python
-    %
+    % Test accuracy
     total_corr= 0;
     for i=1:total_obs
         im = X_test_loaded(:, i);
@@ -80,18 +76,12 @@ for k = 1:length(onnxFiles)
     
     %% Verification
     
-    % To save results (robustness and time)
-    % results = zeros(numObs,2);
-    
     % First, we define the reachability options
     reachOptions = struct; % initialize
     reachOptions.reachMethod = 'exact-star';
     
-    nR = 50; % ---> just chosen arbitrarily
-    
     % ADJUST epsilons value here
-    epsilon = [0.0,0.02,0.03,0.05,0.07,0.1]; 
-    % epsilon = [0.0]; 
+    epsilon = [0.0,0.02,0.03,0.05,0.07,0.1];  
     % -1 -> no perturbation to model
     % 0.0 -> counterfactual fairness (flips sensitive attribute)
     % >0.0 -> individual fairness (flips SA w/ perturbation of numerical features)  
@@ -107,6 +97,7 @@ for k = 1:length(onnxFiles)
     rand_indices = randsample(total_obs, numObs);
     
     for e=1:length(epsilon)
+        clear R outputSet IS temp t
         % Reset the timeout flag
         assignin('base', 'timeoutOccurred', false);
 
@@ -122,50 +113,34 @@ for k = 1:length(onnxFiles)
             idx = rand_indices(i);
             im = X_test_loaded(:, idx);
 
-            % predictedLabels = net.evaluate(im);
-            % [~, Pred] = min(predictedLabels);
-            % disp("Prior Prediction: "+string(Pred))
-            % 
-            % % Flip the sensitive attribute
-            % if im(9) == 1
-            %     im(9) = 0;
-            % else
-            %     im(9) = 1;
-            % end
-            % 
-            % predictedLabels = net.evaluate(im);
-            % [~, Pred] = min(predictedLabels);
-            % disp("Prediction After Flipping: "+string(Pred))
-            % TrueLabel = y_test_loaded(i);
-            % disp("True Label: "+string(TrueLabel))
-
             IS = perturbationIF(X_test_loaded(:, idx), epsilon(e), min_values, max_values);
 
             t = tic;  % Start timing the verification for each sample
             outputSet = net.reach(IS,reachOptions); % Generate output set
             target = y_test_loaded(idx);
             
+            R = Star;
             % Process set
             if ~isa(outputSet, "Star")
                 nr = length(outputSet);
-                R = Star;
+                R(nr) = Star;
                 for s=1:nr
-                    R = outputSet(s).toStar;
+                    R(s) = outputSet(s).toStar;
                 end
             else
                 R = outputSet;
             end
 
-            [l,u] = R.getRanges;
-
             % Process fairness specification
             target = net.robustness_set(target, 'min');
 
             % Verify fairness
-            temp = verify_specification(R, target);
-            
-            if reachOptions.reachMethod == "exact-star" && temp == 2
-                temp = 0;
+            temp = 1;
+            for s = 1:length(R)
+                if verify_specification(R(s), target) ~= 1
+                    temp = 0;
+                    break
+                end
             end
 
             met(i,e) = 'exact';
@@ -215,7 +190,7 @@ timestamp = datetime('now', 'Format', 'yyyyMMdd_HHmmss');
 % Convert the datetime to a string
 timestampStr = char(timestamp);
 % Create the filename with the timestamp
-csv_filename = ['./adult_verify_debiased_results_', timestampStr, '.csv'];
+csv_filename = ['./results/adult_verify_debiased_results_', timestampStr, '.csv'];
 fid = fopen(csv_filename, 'w');
 fprintf(fid, 'Model,Epsilon,FairPercent,NonFairPercent,UnknownPercent,TotalTime,AvgTime\n');
 for r = 1:length(results)
@@ -254,17 +229,10 @@ function IS = perturbationIF(x, epsilon, min_values, max_values)
             end
         end
     end
-    % disp("Minimum Values: "+string(min_values))
-    % disp("Maximum Values: "+string(max_values))
-    % disp("Sample: "+string(x))
-    % disp("Disturbance: "+string(disturbance))
-    
 
     % Calculate disturbed lower and upper bounds considering min and max values
     lb = max(x - disturbance, min_values);
     ub = min(x + disturbance, max_values);
-    % disp("Lower Bound: "+string(lb))
-    % disp("Upper Bound: "+string(ub))
     IS = ImageStar(single(lb), single(ub)); % default: single (assume onnx input models)
 end
 

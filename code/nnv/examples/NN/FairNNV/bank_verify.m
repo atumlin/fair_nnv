@@ -1,5 +1,4 @@
 %% Exact Fairness Verification of Bank Marketing Classification Model (NN)
-% Comparison for the models used in Fairify
 
 % Suppress warnings
 warning('off', 'nnet_cnn_onnx:onnx:WarnAPIDeprecation');
@@ -18,20 +17,24 @@ load("./data/bank_data.mat", 'X', 'y');  % Load data once
 % Initialize results storage
 results = {};
 
+modelList = {'BM-5','BM-6','BM-7'};
+
+
 %% Loop through each model
 for k = 1:length(onnxFiles)
+    [~, modelName, ~] = fileparts(onnxFiles(k).name);
+    if any(strcmp(modelName, modelList))
+        
+    clear net netONNX outputSet IS R
+    
     onnx_model_path = fullfile(onnxFiles(k).folder, onnxFiles(k).name);
-    % onnx_model_path = fullfile("debiased_model.onnx");
 
     % Load the ONNX file as DAGNetwork
     netONNX = importONNXNetwork(onnx_model_path, 'OutputLayerType', 'classification', 'InputDataFormats', {'BC'});
 
-    % analyzeNetwork(netONNX)
-
     % Convert the DAGNetwork to NNV format
     net = matlab2nnv(netONNX);
      
-    % Jimmy Rigged Fix: manually edit ouput size
     net.OutputSize = 2;
     
     X_test_loaded = permute(X, [2, 1]);
@@ -51,52 +54,35 @@ for k = 1:length(onnxFiles)
 
     % Count total observations
     total_obs = size(X_test_loaded, 2);
-    % disp(['There are total ', num2str(total_obs), ' observations']);
-
-    % % Print normalized values for a few samples
-    % disp('First few normalized inputs in MATLAB:');
-    % disp(X_test_loaded(:, 1:5));
-    % 
-    % % Print model outputs for a few samples
-    % disp('First few model outputs in MATLAB:');
-    % for i = 1:5
-    %     im = X_test_loaded(:, i);
-    %     predictedLabels = net.evaluate(im);
-    %     disp(predictedLabels);
-    % end
-
-    % % 
-    % % Test accuracy --> verify matches with python
-    % % 
-    % total_corr = 0;
-    % for i=1:total_obs
-    %     im = X_test_loaded(:, i);
-    %     predictedLabels = net.evaluate(im);
-    %     [~, Pred] = min(predictedLabels);
-    %     TrueLabel = y_test_loaded(i);
-    %     if Pred == TrueLabel
-    %         total_corr = total_corr + 1;
-    %     end
-    % end
-    % disp(['Test Accuracy: ', num2str(total_corr/total_obs)]);
 
     % Number of observations we want to test
     numObs = 100;
+
+    % Test accuracy --> verify matches with python
+    total_corr= 0;
+    for i=1:total_obs
+        im = X_test_loaded(:, i);
+        predictedLabels = net.evaluate(im);
+        [~, Pred] = min(predictedLabels);
+        % disp(Pred)
+        TrueLabel = y_test_loaded(i);
+        % disp(TrueLabel)
+        if Pred == TrueLabel
+            total_corr = total_corr + 1;
+        end
+    end
+    disp("Accuracy of Model: "+string(total_corr/total_obs));
+
     
     %% Verification
-    
-    % To save results (robustness and time)
-    % results = zeros(numObs,2);
-    
+
     % First, we define the reachability options
     reachOptions = struct; % initialize
     reachOptions.reachMethod = 'exact-star';
     
-    nR = 50; % ---> just chosen arbitrarily
-    
     % ADJUST epsilons value here
-    % epsilon = [0.001];
-    epsilon = [-1,0.0,0.02,0.03,0.05,0.07,0.1]; 
+    % epsilon = [0.0,0.02,0.03,0.05,0.07,0.1];  
+    epsilon = [0.0];  
     % -1 -> no perturbation to model
     % 0.0 -> counterfactual fairness (flips sensitive attribute)
     % >0.0 -> individual fairness (flips SA w/ perturbation of numerical features)  
@@ -112,6 +98,7 @@ for k = 1:length(onnxFiles)
     rand_indices = randsample(total_obs, numObs);
     
     for e=1:length(epsilon)
+        clear R outputSet IS temp t
         % Reset the timeout flag
         assignin('base', 'timeoutOccurred', false);
 
@@ -126,18 +113,18 @@ for k = 1:length(onnxFiles)
         for i=1:numObs
             idx = rand_indices(i);
             IS = perturbationIF(X_test_loaded(:, idx), epsilon(e), min_values, max_values);
-           
-           
+
             t = tic;  % Start timing the verification for each sample
             outputSet = net.reach(IS,reachOptions); % Generate output set
             target = y_test_loaded(idx);
             
-            % Process set
+            R = Star;
+             % Process set
             if ~isa(outputSet, "Star")
                 nr = length(outputSet);
-                R = Star;
+                R(nr) = Star;
                 for s=1:nr
-                    R = outputSet(s).toStar;
+                    R(s) = outputSet(s).toStar;
                 end
             else
                 R = outputSet;
@@ -147,10 +134,12 @@ for k = 1:length(onnxFiles)
             target = net.robustness_set(target, 'min');
 
             % Verify fairness
-            temp = verify_specification(R, target);
-            
-            if reachOptions.reachMethod == "exact-star" && temp == 2
-                temp = 0;
+            temp = 1;
+            for s = 1:length(R)
+                if verify_specification(R(s), target) ~= 1
+                    temp = 0;
+                    break
+                end
             end
 
             met(i,e) = 'exact';
@@ -188,9 +177,9 @@ for k = 1:length(onnxFiles)
         disp("Number of unknown samples = "+string(unk)+ ", equivalent to " + string(100*unk/N) + "% of the samples.");
         disp(" ");
         disp("It took a total of "+string(totalTime) + " seconds to compute the verification results, an average of "+string(avgTime)+" seconds per sample");
-        
         % Collect results for CSV
         results{end+1} = {onnxFiles(k).name, epsilon(e), 100 * rob / N, 100 * not_rob / N, 100 * unk / N, totalTime, avgTime};
+    end
     end
 end
 
